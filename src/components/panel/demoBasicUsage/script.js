@@ -18,6 +18,7 @@ BasicDemoCtrl.prototype.showDialog = function() {
     controller: PanelDialogCtrl,
     controllerAs: 'ctrl',
     templateUrl: 'panel.tmpl.html',
+    hasBackdrop: true,
     panelClass: 'demo-dialog-example',
     position: position,
     trapFocus: true,

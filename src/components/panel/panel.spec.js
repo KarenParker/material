@@ -7,6 +7,7 @@ describe('$mdPanel', function() {
   var HIDDEN_CLASS = '_md-panel-hidden';
   var FOCUS_TRAPS_CLASS = '._md-panel-focus-trap';
   var FULLSCREEN_CLASS = '_md-panel-fullscreen';
+  var BACKDROP_CLASS = '._md-panel-backdrop';
   var DEFAULT_TEMPLATE = '<div>Hello World!</div>';
   var DEFAULT_CONFIG = { template: DEFAULT_TEMPLATE };
   var PANEL_ID_PREFIX = 'panel_';
@@ -460,7 +461,7 @@ describe('$mdPanel', function() {
       expect(angular.element(document.activeElement).attr('id')).toBe('donuts');
     });
 
-    it('should not focus on open focusOnOpen=false', function() {
+    it('should not focus on open when focusOnOpen=false', function() {
       var template = '<button id="donuts" md-autofocus>Donuts</button>';
       var config = {
         focusOnOpen: false,
@@ -482,7 +483,21 @@ describe('$mdPanel', function() {
 
       openPanel(config);
       expect(PANEL_EL).toHaveClass(FULLSCREEN_CLASS);
+    });
 
+    it('should default backdrop to false', function() {
+      openPanel(DEFAULT_CONFIG);
+      expect(BACKDROP_CLASS).not.toExist();
+    });
+
+    it('should show backdrop on open when hasBackdrop=true', function() {
+      var config = { template: DEFAULT_TEMPLATE, hasBackdrop: true };
+
+      openPanel(config);
+      expect(BACKDROP_CLASS).toExist();
+
+      closePanel();
+      expect(BACKDROP_CLASS).not.toExist();
     });
   });
 

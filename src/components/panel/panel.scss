@@ -49,6 +49,12 @@
       opacity: 1;
       transition: all 0.4s linear;
     }
+
+    &.md-opaque {
+      height: 100%;
+      opacity: .48;
+      transition: opacity 500ms;
+    }
   }
 
   &._md-panel-animate-slide-out {
@@ -64,5 +70,11 @@
   &._md-panel-animate-fade-out {
     opacity: 0;
     transition: all 0.4s linear;
+  }
+
+  &.md-opaque {
+    height: 100%;
+    opacity: .48;
+    transition: opacity 500ms;
   }
 }

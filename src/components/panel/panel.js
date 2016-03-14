@@ -4,7 +4,8 @@
  */
 angular
     .module('material.components.panel', [
-      'material.core'
+      'material.core',
+      'material.components.backdrop'
     ])
     .service('$mdPanel', MdPanelService);
 
@@ -126,14 +127,14 @@ angular
  *   - `animation` - `{MdPanelAnimation=}`: An MdPanelAnimation object that
  *     specifies the animation of the panel. For more information, see
  *     `MdPanelAnimation`.
+ *   - `hasBackdrop` - `{boolean=}`: Whether there should be an opaque backdrop
+ *     behind the panel. Defaults to false.
  *
  * TODO(ErinCoughlan): Add the following config options.
  *   - `groupName` - `{string=}`: Name of panel groups. This group name is
  *     used for configuring the number of open panels and identifying specific
  *     behaviors for groups. For instance, all tooltips will be identified
  *     using the same groupName.
- *   - `hasBackdrop` - `{boolean=}`: Whether there should be an opaque backdrop
- *     behind the panel. Defaults to false.
  *   - `disableParentScroll` - `{boolean=}`: Whether the user can scroll the
  *     page behind the panel. Defaults to false.
  *
@@ -598,6 +599,7 @@ var FOCUS_TRAP_TEMPLATE = angular.element(
 function MdPanelService($rootElement, $rootScope, $injector) {
   /**
    * Default config options for the panel.
+   * Note: "scope: $rootScope.$new(true)," is added later.
    * @private {!Object}
    */
   this._defaultConfigOptions = {
@@ -607,17 +609,20 @@ function MdPanelService($rootElement, $rootScope, $injector) {
     escapeToClose: false,
     focusOnOpen: true,
     fullscreen: false,
-    scope: $rootScope.$new(true),
+    hasBackdrop: false,
     transformTemplate: angular.bind(this, this.wrapTemplate_),
     trapFocus: false,
     zIndex: defaultZIndex
   };
 
   /** @private {!Object} */
-  this._config = this._defaultConfigOptions;
+  this._config = {};
 
   /** @private {!angular.$injector} */
   this._$injector = $injector;
+
+  /** @private {!angular.Scope} */
+  this._$rootScope = $rootScope;
 
   /**
    * Default animations that can be used within the panel.
@@ -649,6 +654,8 @@ function MdPanelService($rootElement, $rootScope, $injector) {
 MdPanelService.prototype.create = function(opt_config) {
   var configSettings = opt_config || {};
 
+  angular.copy(this._defaultConfigOptions, this._config);
+  this._config.scope = this._$rootScope.$new(true);
   angular.extend(this._config, configSettings);
 
   var instanceId = 'panel_' + this._$injector.get('$mdUtil').nextUid();
@@ -743,6 +750,18 @@ function MdPanelRef(config, $injector) {
   /** @private @const {!angular.Scope} */
   this._$rootScope = $injector.get('$rootScope');
 
+  /** @private @const {!angular.$animate} */
+  this._$animate = $injector.get('$animate');
+
+  /** @private @const {!angular.$window} */
+  this._$window = $injector.get('$window');
+
+  /** @private @const {!angular.$document} */
+  this._$document = $injector.get('$document');
+
+  /** @private @const {!angular.$document} */
+  this._$mdPanel = $injector.get('$mdPanel');
+
 
   // Public variables.
   /**
@@ -794,8 +813,8 @@ function MdPanelRef(config, $injector) {
   /** @private {!angular.JQLite|undefined} */
   this._bottomFocusTrap;
 
-  /** @private {!angular.$q.Promise|undefined} */
-  this._reverseAnimation;
+  /** @private {!angular.JQLite|undefined} */
+  this._backdropRef;
 }
 
 
@@ -837,14 +856,27 @@ MdPanelRef.prototype.open = function() {
 MdPanelRef.prototype.close = function() {
   // TODO(ErinCoughlan) - Cancel any in-progress actions.
 
+  var destroy = function() {
+    // TODO(ErinCoughlan) - Add destroy. This will make the code here
+    // different than just calling this.detach().
+  }
+
   var self = this;
   return this._$q(function(resolve, reject) {
     self.hide().then(function () {
-      self.detach().then(function() {
-        // TODO(ErinCoughlan) - Add destroy. This will make the code here
-        // different than just calling this.detach().
-        resolve(self);
-      }, reject);
+      if (self._backdropRef) {
+        self._backdropRef.close().then(function() {
+          self.detach().then(function() {
+            destroy();
+            resolve(self);
+          }, reject);
+        }, reject);
+      } else {
+        self.detach().then(function() {
+          destroy();
+          resolve(self);
+        }, reject);
+      }
     }, reject);
   });
 };
@@ -884,7 +916,7 @@ MdPanelRef.prototype.attachOnly = function() {
  */
 MdPanelRef.prototype.detach = function() {
   if (!this.isAttached) {
-    this._detachPromise;
+    return this._detachPromise;
   }
 
   // TODO(ErinCoughlan) - Cancel any in-progress actions.
@@ -934,9 +966,10 @@ MdPanelRef.prototype.show = function() {
 
   var self = this;
   this._showPromise = this._$q(function(resolve, reject) {
+    self._backdropRef && self._backdropRef.show();
     self.removeClass(MD_PANEL_HIDDEN);
     self._animateOpen().then(function() {
-      self.focusOnOpen();
+      self._focusOnOpen();
       resolve(self);
     }, reject);
   });
@@ -965,6 +998,7 @@ MdPanelRef.prototype.hide = function() {
 
   var self = this;
   this._hidePromise = this._$q(function(resolve, reject) {
+    self._backdropRef && self._backdropRef.hide();
     self._animateClose().then(function() {
       self.addClass(MD_PANEL_HIDDEN);
       resolve(self);
@@ -1023,8 +1057,9 @@ MdPanelRef.prototype.toggleClass = function(toggleClass) {
 
 /**
  * Focuses on the panel or the first focus target.
+ * @private
  */
-MdPanelRef.prototype.focusOnOpen = function() {
+MdPanelRef.prototype._focusOnOpen = function() {
   if (this._config['focusOnOpen']) {
     // Wait a digest to guarantee md-autofocus has finished adding the class
     // _md-autofocus, otherwise the focusable element isn't available to focus.
@@ -1035,6 +1070,30 @@ MdPanelRef.prototype.focusOnOpen = function() {
       target.focus();
     });
   }
+};
+
+
+/**
+ * Shows the backdrop.
+ * @returns {!angular.$q.Promise} A promise that is resolved when the backdrop
+ * is created and attached.
+ * @private
+ */
+MdPanelRef.prototype._createBackdrop = function() {
+  if (this._config.hasBackdrop) {
+    var backdropAnimation = this._$mdPanel.newPanelAnimation()
+        .openFrom(this._config.attachTo)
+        .withAnimation('md-opaque');
+    var backdropConfig = {
+      animation: backdropAnimation,
+      attachTo: this._config.attachTo,
+      focusOnOpen: false,
+      zIndex: this._config.zIndex - 1
+    }
+    this._backdropRef = this._$mdPanel.create(backdropConfig);
+    return this._backdropRef.attachOnly();
+  }
+  return this._$q.resolve();
 };
 
 
@@ -1067,7 +1126,9 @@ MdPanelRef.prototype._createPanel = function() {
 
           self._addStyles();
           self._configureTrapFocus();
-          resolve(self);
+          self._createBackdrop().then(function() {
+            resolve(self)
+          }, reject);
         }, reject);
   });
 };
@@ -1895,6 +1956,9 @@ MdPanelAnimation.prototype.animateOpen = function(panelEl, animator) {
       if (angular.isString(this._animationClass)) {
         animationOptions = {
           transitionInClass: this._animationClass + ' _md-panel-shown'
+        };
+        reverseAnimationOptions = {
+          transitionOutClass: this._animationClass + ' _md-panel-shown'
         };
       } else {
         animationOptions = {
