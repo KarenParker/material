@@ -1011,6 +1011,12 @@ MdPanelRef.prototype._createPanel = function() {
             self._panelEl.addClass(self._config['panelClass']);
           }
 
+          // Panel may be outside the $rootElement, tell ngAnimate to animate
+          // regardless.
+          if ($animate.pin) {
+            $animate.pin(self._panelContainer, self._config['attachTo']);
+          }
+
           self._addStyles();
           self._configureTrapFocus();
           resolve(self);
