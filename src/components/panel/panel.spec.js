@@ -1,4 +1,4 @@
-describe('$mdPanel', function() {
+fdescribe('$mdPanel', function() {
   var $mdPanel, $rootScope, $rootEl, $templateCache, $q, $material, $mdConstant,
       $mdUtil;
   var panelRef;
@@ -77,7 +77,9 @@ describe('$mdPanel', function() {
     });
     attachedElements = [];
 
-    panelRef && panelRef.close();
+    if (panelRef && panelRef.isAttached) {
+      panelRef.close();
+    }
 
     // TODO(ErinCoughlan) - Remove when close destroys.
     panelRef = null;
@@ -147,7 +149,7 @@ describe('$mdPanel', function() {
       panelRef.open().then(function () {
         openResolved = true;
       });
-      $rootScope.$apply();
+      flushPanel();
 
       expect(openResolved).toBe(true);
       expect(PANEL_WRAPPER_CLASS).toExist();
@@ -157,7 +159,7 @@ describe('$mdPanel', function() {
       panelRef.close().then(function () {
         closeResolved = true;
       });
-      $rootScope.$apply();
+      flushPanel();
 
       expect(closeResolved).toBe(true);
       expect(panelRef.isAttached).toEqual(false);
@@ -296,6 +298,103 @@ describe('$mdPanel', function() {
       expect(closeRejected).toBe(true);
       expect(panelRef.isAttached).toEqual(true);
     });
+
+    it('should handle calling open multiple times', function () {
+      var resolve1 = false;
+      var resolve2 = false;
+      var resolve3 = false;
+
+      // Test twice in a row before flushing.
+      panelRef.open().then(function () {
+        resolve1 = true;
+      });
+      panelRef.open().then(function () {
+        resolve2 = true;
+      });
+
+      flushPanel();
+
+      // Test again after a flush.
+      panelRef.open().then(function () {
+        resolve3 = true;
+      });
+
+      flushPanel();
+
+      expect(resolve1).toBe(true);
+      expect(resolve2).toBe(true);
+      expect(resolve3).toBe(true);
+      expect(panelRef.isAttached).toEqual(true);
+    });
+
+    describe('reject in-progress promises:', function() {
+      it('should reject open when closing', function () {
+        var rejected = false;
+
+        panelRef.open().then(function () {
+        }, function () {
+          rejected = true;
+        });
+        panelRef.close();
+        flushPanel();
+
+        expect(rejected).toBe(true);
+        expect(panelRef.isAttached).toEqual(false);
+      });
+
+      it('should reject close when opening', function () {
+        var rejected = false;
+
+        panelRef.open();
+        flushPanel();
+
+        panelRef.close().then(function () {
+        }, function () {
+          rejected = true;
+        });
+        panelRef.open();
+        flushPanel();
+
+        expect(rejected).toBe(true);
+        expect(panelRef.isAttached).toEqual(true);
+      });
+
+      it('should reject show when hiding', function () {
+        var rejected = false;
+
+        panelRef.attach();
+        flushPanel();
+
+        panelRef.show().then(function () {
+        }, function () {
+          rejected = true;
+        });
+        panelRef.hide();
+        flushPanel();
+
+        expect(rejected).toBe(true);
+        expect(panelRef.isAttached).toEqual(true);
+        expect(panelRef._panelContainer).toHaveClass(HIDDEN_CLASS);
+      });
+
+      it('should reject hide when showing', function () {
+        var rejected = false;
+
+        panelRef.open();
+        flushPanel();
+
+        panelRef.hide().then(function () {
+        }, function () {
+          rejected = true;
+        });
+        panelRef.show();
+        flushPanel();
+
+        expect(rejected).toBe(true);
+        expect(panelRef.isAttached).toEqual(true);
+        expect(panelRef._panelContainer).not.toHaveClass(HIDDEN_CLASS);
+      });
+    });
   });
 
   describe('config options:', function() {
@@ -308,12 +407,19 @@ describe('$mdPanel', function() {
         template: DEFAULT_TEMPLATE
       };
 
-      openPanel(config1);
-      openPanel(DEFAULT_CONFIG);
+      var panel1 = $mdPanel.create(config1);
+      var panel2 = $mdPanel.create(DEFAULT_CONFIG);
+
+      panel1.open();
+      panel2.open();
+      flushPanel();
 
       var panels = document.querySelectorAll(PANEL_EL);
-      expect(panels).toHaveClass(customClass);
+      expect(panels[0]).toHaveClass(customClass);
       expect(panels[1]).not.toHaveClass(customClass);
+
+      panel1.close();
+      panel2.close();
     });
 
     describe('should attach panel to a specific element', function() {
@@ -612,25 +718,25 @@ describe('$mdPanel', function() {
 
           expect(closeCalled).toBe(true);
         });
-  });
 
-  it('should disable scrolling when disableParentScroll is true', function() {
-    var config = {
-      template: DEFAULT_TEMPLATE,
-      disableParentScroll: true,
-    };
-    spyOn($mdUtil, 'disableScrollAround').and.callThrough();
+    it('should disable scrolling when disableParentScroll is true', function() {
+      var config = {
+        template: DEFAULT_TEMPLATE,
+        disableParentScroll: true,
+      };
+      spyOn($mdUtil, 'disableScrollAround').and.callThrough();
 
-    openPanel(config);
+      openPanel(config);
 
-    expect(PANEL_EL).toExist();
-    expect(SCROLL_MASK_CLASS).toExist();
+      expect(PANEL_EL).toExist();
+      expect(SCROLL_MASK_CLASS).toExist();
 
-    closePanel();
+      closePanel();
 
-    var scrollMaskEl = $rootEl[0].querySelector(SCROLL_MASK_CLASS);
-    expect(scrollMaskEl).not.toExist();
-    expect($mdUtil.disableScrollAround).toHaveBeenCalled();
+      var scrollMaskEl = $rootEl[0].querySelector(SCROLL_MASK_CLASS);
+      expect(scrollMaskEl).not.toExist();
+      expect($mdUtil.disableScrollAround).toHaveBeenCalled();
+    });
   });
 
   describe('component logic: ', function() {

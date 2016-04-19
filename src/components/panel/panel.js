@@ -787,20 +787,32 @@ function MdPanelRef(config, $injector) {
   /** @private {!Object} */
   this._config = config;
 
-  /** @private {!angular.$q.Promise|undefined} */
-  this._openPromise;
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._openDeferred;
 
-  /** @private {!angular.$q.Promise|undefined} */
-  this._attachPromise;
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._closeDeferred;
 
-  /** @private {!angular.$q.Promise|undefined} */
-  this._detachPromise;
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._attachDeferred;
 
-  /** @private {!angular.$q.Promise|undefined} */
-  this._showPromise;
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._detachDeferred;
 
-  /** @private {!angular.$q.Promise|undefined} */
-  this._hidePromise;
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._showDeferred;
+
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._hideDeferred;
+
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._createDeferred;
+
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._animateOpenDeferred;
+
+  /** @private {!angular.$q.Deferred|undefined} */
+  this._animateCloseDeferred;
 
   /** @private {!angular.JQLite|undefined} */
   this._panelContainer;
@@ -833,24 +845,24 @@ function MdPanelRef(config, $injector) {
  * the panel is opened and animations finish.
  */
 MdPanelRef.prototype.open = function() {
-  if (this._openPromise) {
-    // Panel is already shown so re-use (already resolved) promise from when
-    // it was shown.
-    return this._openPromise;
+  if (this._openDeferred && this._openDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._openDeferred.promise;
   }
 
-  // TODO(ErinCoughlan) - Cancel any in-progress actions.
+  this._animateCloseDeferred && this._animateCloseDeferred.reject();
+  this._hideDeferred && this._hideDeferred.reject();
+  this._detachDeferred && this._detachDeferred.reject();
+  this._closeDeferred && this._closeDeferred.reject();
 
   var self = this;
-  this._openPromise = this.attach()
-      .then(function() {
-        return self.show();
-      }, this._$q.reject)
-      .then(function() {
-        return self; // Return a reference to the MdPanelRef.
-      }, this._$q.reject);
+  this._openDeferred = this._$q.defer();
+  this.attach()
+      .then(function() { return self.show(); }, this._openDeferred.reject)
+      .then(function() { self._openDeferred.resolve(self); },
+          this._openDeferred.reject);
 
-  return this._openPromise;
+  return this._openDeferred.promise;
 };
 
 
@@ -861,20 +873,28 @@ MdPanelRef.prototype.open = function() {
  * closed and animations finish.
  */
 MdPanelRef.prototype.close = function() {
-  // TODO(ErinCoughlan) - Cancel any in-progress actions.
+  if (this._closeDeferred &&
+      this._closeDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._closeDeferred.promise;
+  }
+
+  this._createDeferred && this._createDeferred.reject();
+  this._attachDeferred && this._attachDeferred.reject();
+  this._animateOpenDeferred && this._animateOpenDeferred.reject();
+  this._showDeferred && this._showDeferred.reject();
+  this._openDeferred && this._openDeferred.reject();
 
   var self = this;
-  var closePromise = this.hide()
+  this._closeDeferred = this._$q.defer();
+  this.hide()
       .then(function() {
         return self.detach();
-      }, this._$q.reject)
-      .then(function() {
-        // TODO(ErinCoughlan) - Add destroy. This will make the code here
-        // different than just calling this.detach().
-        return self._$q.resolve(self);
-      }, this._$q.reject);
+      }, this._closeDeferred.reject)
+      .then(function() { self._closeDeferred.resolve(self); },
+          this._closeDeferred.reject);
 
-  return closePromise;
+  return this._closeDeferred.promise;
 };
 
 
@@ -885,42 +905,64 @@ MdPanelRef.prototype.close = function() {
  * the panel is attached.
  */
 MdPanelRef.prototype.attach = function() {
-  if (this.isAttached) {
-    return this._attachPromise;
+  if (this._attachDeferred &&
+      this._attachDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._attachDeferred.promise;
   }
 
-  // TODO(ErinCoughlan) - Cancel any in-progress actions.
+  var closeInProgress = this._closeInProgress();
+
+  this._detachDeferred && this._detachDeferred.reject();
+  this._closeDeferred && this._closeDeferred.reject();
+
+  this._attachDeferred = this._$q.defer();
+  if (this.isAttached && this._panelEl && !closeInProgress) {
+    this._attachDeferred.resolve(this);
+    return this._attachDeferred.promise;
+  }
 
   var self = this;
-
-  this._attachPromise = this._$q.all([
+  this._$q.all([
     this._createBackdrop(),
-    this._createPanel().then(function() {
+    this._createPanel().then(function () {
       self.isAttached = true;
       self._addEventListeners();
-      return self._$q.resolve(self);
-    }, this._$q.reject)
-  ]);
+      return self;
+    }, this._attachDeferred.reject)
+  ]).then(function() { self._attachDeferred.resolve(self); },
+        this._attachDeferred.reject);
 
-  return this._attachPromise;
+  return this._attachDeferred.promise;
 };
 
 
 /**
  * Only detaches the panel. Will NOT hide the panel first.
  *
- * @returns {!angular.$q.Promise} A promise that is resolved when the panel is
+ * @returns {!angular.$q.Promise<MdPanelRef>} A promise that is resolved when the panel is
  * detached.
  */
 MdPanelRef.prototype.detach = function() {
-  if (!this.isAttached) {
-    return this._detachPromise;
+  if (this._detachDeferred &&
+      this._detachDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._detachDeferred.promise;
   }
 
-  // TODO(ErinCoughlan) - Cancel any in-progress actions.
+  var openInProgress = this._openInProgress();
+
+  this._createDeferred && this._createDeferred.reject();
+  this._attachDeferred && this._attachDeferred.reject();
+  this._openDeferred && this._openDeferred.reject();
+
+  this._detachDeferred = this._$q.defer();
+  if (!this.isAttached && !openInProgress) {
+    this._detachDeferred.resolve(this);
+    return this._detachDeferred.promise;
+  }
 
   var self = this;
-
   var detachFn = function() {
     self._removeEventListener();
 
@@ -936,7 +978,7 @@ MdPanelRef.prototype.detach = function() {
 
     self._panelContainer.remove();
     self.isAttached = false;
-    return self._$q.resolve(self);
+    return self._$q.when(self);
   };
 
   if (this._restoreScroll) {
@@ -944,12 +986,13 @@ MdPanelRef.prototype.detach = function() {
     this._restoreScroll = null;
   }
 
-  this._detachPromise = self._$q.all([
+  this._$q.all([
     detachFn(),
-    self._backdropRef ? self._backdropRef.detach() : self._$q.resolve(self)
-  ]);
+    this._backdropRef ? this._backdropRef.detach() : this._$q.when(this)
+  ]).then(function() { self._detachDeferred.resolve(self); },
+      this._detachDeferred.reject);
 
-  return this._detachPromise;
+  return this._detachDeferred.promise;
 };
 
 
@@ -960,38 +1003,53 @@ MdPanelRef.prototype.detach = function() {
  * shown and animations finish.
  */
 MdPanelRef.prototype.show = function() {
+  debugger;
+  if (this._showDeferred &&
+      this._showDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._showDeferred.promise;
+  }
+
   if (!this._panelContainer) {
-    return this._$q.reject(
+    this._showDeferred = this._$q.defer();
+    this._showDeferred.reject(
         'Panel does not exist yet. Call open() or attach().');
+    return this._showDeferred;
   }
 
-  if (!this._panelContainer.hasClass(MD_PANEL_HIDDEN) && this._showPromise) {
-    return this._showPromise;
-  }
+  var closeInProgress = this._closeInProgress();
 
-  // TODO(ErinCoughlan) - Cancel any in-progress actions.
+  this._animateCloseDeferred && this._animateCloseDeferred.reject();
+  this._hideDeferred && this._hideDeferred.reject();
+  this._closeDeferred && this._closeDeferred.reject();
+
+  this._showDeferred = this._$q.defer();
+  if (!this._panelContainer.hasClass(MD_PANEL_HIDDEN) && !closeInProgress) {
+    this._showDeferred.resolve(this);
+    return this._showDeferred.promise;
+  }
 
   var self = this;
-
   var animatePromise = function() {
     self.removeClass(MD_PANEL_HIDDEN);
     return self._animateOpen();
   };
 
-  this._showPromise = this._$q.all([
-      this._backdropRef ? this._backdropRef.show() : this._$q.resolve(self),
+  this._$q.all([
+      this._backdropRef ? this._backdropRef.show() : this._$q.when(this),
       animatePromise().then(function() {
-        return self._$q.resolve(self);
+        return self;
       }, function() {
         self._$log.warn('MdPanel Animations failed. Showing panel without animating.');
-        return self._$q.resolve(self);
+        return self;
       }).then(function() {
         self._focusOnOpen();
-        return self._$q.resolve(self);
-      }, self._$q.reject)
-  ]);
+        return self;
+      }, this._showDeferred.reject)
+    ]).then(function() { self._showDeferred.resolve(self); },
+          this._showDeferred.reject);
 
-  return this._showPromise;
+  return this._showDeferred.promise;
 };
 
 
@@ -1002,32 +1060,46 @@ MdPanelRef.prototype.show = function() {
  * hidden and animations finish.
  */
 MdPanelRef.prototype.hide = function() {
+  if (this._hideDeferred &&
+      this._hideDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._hideDeferred.promise;
+  }
+
   if (!this._panelContainer) {
-    return this._$q.reject(
+    this._hideDeferred = this._$q.defer();
+    this._hideDeferred.reject(
         'Panel does not exist yet. Call open() or attach().');
+    return this._hideDeferred.promise;
   }
 
-  if (this._panelContainer.hasClass(MD_PANEL_HIDDEN) && this._hidePromise) {
-    return this._hidePromise;
-  }
+  var openInProgress = this._openInProgress();
 
-  // TODO(ErinCoughlan) - Cancel any in-progress actions.
+  this._animateOpenDeferred && this._animateOpenDeferred.reject();
+  this._showDeferred && this._showDeferred.reject();
+  this._openDeferred && this._openDeferred.reject();
+
+  this._hideDeferred = this._$q.defer();
+
+  if (this._panelContainer.hasClass(MD_PANEL_HIDDEN) && !openInProgress) {
+    this._hideDeferred.resolve(this);
+    return this._hideDeferred.promise;
+  }
 
   var self = this;
-  this._hidePromise = this._$q.all([
-    this._backdropRef ? this._backdropRef.hide() : this._$q.resolve(self),
-    this._animateClose().then(function() {
-      return self._$q.resolve(self);
-    }, function() {
-      self._$log.warn('MdPanel Animations failed. Hiding panel without animating.');
-      return self._$q.resolve(self);
-    }).then(function() {
+  this._$q.all([
+    this._backdropRef ? this._backdropRef.hide() : this._$q.when(this),
+    this._animateClose().then(function () {
       self.addClass(MD_PANEL_HIDDEN);
-      return self._$q.resolve(self);
-    }, self._$q.reject)
-  ]);
+    }, function () {
+      self._$log.warn('MdPanel Animations failed. Hiding panel without animating.');
+      self.addClass(MD_PANEL_HIDDEN);
+      return self;
+    })
+  ]).then(function() { self._hideDeferred.resolve(self); },
+      this._hideDeferred.reject);
 
-  return this._hidePromise;
+  return this._hideDeferred.promise;
 };
 
 
@@ -1085,44 +1157,51 @@ MdPanelRef.prototype.toggleClass = function(toggleClass) {
  * @private
  */
 MdPanelRef.prototype._createPanel = function() {
+  if (this._createDeferred &&
+      this._createDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._createDeferred.promise;
+  }
+
   var self = this;
-  return this._$q(function(resolve, reject) {
-    if (!self._config.locals) {
-      self._config.locals = {};
-    }
-    self._config.locals.mdPanelRef = self;
-    return self._$mdCompiler.compile(self._config)
-        .then(function(compileData) {
-          self._panelContainer = compileData.link(self._config['scope']);
-          getElement(self._config['attachTo']).append(self._panelContainer);
+  this._createDeferred = this._$q.defer();
+  if (!self._config.locals) {
+    self._config.locals = {};
+  }
+  self._config.locals.mdPanelRef = self;
+  self._$mdCompiler.compile(self._config)
+    .then(function(compileData) {
+      self._panelContainer = compileData.link(self._config['scope']);
+      getElement(self._config['attachTo']).append(self._panelContainer);
 
-          if (self._config['disableParentScroll']) {
-            self._restoreScroll = self._$mdUtil.disableScrollAround(
-                null, self._panelContainer);
-          }
+      if (self._config['disableParentScroll']) {
+        self._restoreScroll = self._$mdUtil.disableScrollAround(
+            null, self._panelContainer);
+      }
 
-          self._panelEl = angular.element(
-              self._panelContainer[0].querySelector('.md-panel'));
+      self._panelEl = angular.element(
+          self._panelContainer[0].querySelector('.md-panel'));
 
-          // Add a custom CSS class.
-          if (self._config['panelClass']) {
-            self._panelEl.addClass(self._config['panelClass']);
-          }
+      // Add a custom CSS class.
+      if (self._config['panelClass']) {
+        self._panelEl.addClass(self._config['panelClass']);
+      }
 
-          // Panel may be outside the $rootElement, tell ngAnimate to animate
-          // regardless.
-          if (self._$animate.pin) {
-            self._$animate.pin(self._panelContainer,
-                getElement(self._config['attachTo']));
-          }
+      // Panel may be outside the $rootElement, tell ngAnimate to animate
+      // regardless.
+      if (self._$animate.pin) {
+        self._$animate.pin(self._panelContainer,
+            getElement(self._config['attachTo']));
+      }
 
-          self._configureTrapFocus();
-          return self._addStyles().then(function() {
-            self._panelContainer.addClass(MD_PANEL_HIDDEN);
-            resolve(self);
-          }, reject);
-        }, reject);
-  });
+      self._configureTrapFocus();
+      return self._addStyles().then(function() {
+        self._panelContainer.addClass(MD_PANEL_HIDDEN);
+        self._createDeferred.resolve(self);
+      }, self._createDeferred.reject);
+    }, this._createDeferred.reject);
+
+  return this._createDeferred.promise;
 };
 
 
@@ -1138,7 +1217,7 @@ MdPanelRef.prototype._addStyles = function() {
 
   if (this._config['fullscreen']) {
     this._panelEl.addClass('_md-panel-fullscreen');
-    return this._$q.resolve(this); // Don't setup positioning.
+    return this._$q.when(this); // Don't setup positioning.
   }
 
   return this._configurePosition();
@@ -1153,7 +1232,7 @@ MdPanelRef.prototype._addStyles = function() {
 MdPanelRef.prototype._configurePosition = function() {
   var positionConfig = this._config['position'];
   if (!positionConfig) {
-    return this._$q.resolve(this);
+    return this._$q.when(this);
   }
 
   var self = this;
@@ -1200,23 +1279,27 @@ MdPanelRef.prototype._focusOnOpen = function() {
  */
 MdPanelRef.prototype._createBackdrop = function() {
   if (this._config.hasBackdrop) {
-    var backdropAnimation = this._$mdPanel.newPanelAnimation()
-      .openFrom(this._config.attachTo)
-      .withAnimation({
-        open: '_md-opaque-enter',
-        close: '_md-opaque-leave'
-      });
-    var backdropConfig = {
-      animation: backdropAnimation,
-      attachTo: this._config.attachTo,
-      focusOnOpen: false,
-      panelClass: '_md-panel-backdrop',
-      zIndex: this._config.zIndex - 1
+    if (!this._backdropRef) {
+      var backdropAnimation = this._$mdPanel.newPanelAnimation()
+          .openFrom(this._config.attachTo)
+          .withAnimation({
+            open: '_md-opaque-enter',
+            close: '_md-opaque-leave'
+          });
+      var backdropConfig = {
+        animation: backdropAnimation,
+        attachTo: this._config.attachTo,
+        focusOnOpen: false,
+        panelClass: '_md-panel-backdrop',
+        zIndex: this._config.zIndex - 1
+      };
+      this._backdropRef = this._$mdPanel.create(backdropConfig);
     }
-    this._backdropRef = this._$mdPanel.create(backdropConfig);
-    return this._backdropRef.attach();
+    if (!this._backdropRef.isAttached) {
+      return this._backdropRef.attach();
+    }
   }
-  return this._$q.resolve();
+  return this._$q.when(this);
 };
 
 
@@ -1354,15 +1437,30 @@ MdPanelRef.prototype._configureTrapFocus = function() {
  * @private
  */
 MdPanelRef.prototype._animateOpen = function() {
+
   this.addClass('md-panel-is-showing');
   var animationConfig = this._config['animation'];
   if (!animationConfig) {
     this.addClass('_md-panel-shown');
-    return this._$q.resolve();
+    this._animateOpenDeferred = this._$q.defer();
+    this._animateOpenDeferred.resolve(this);
+    return this._animateOpenDeferred.promise;
   }
 
-  return animationConfig.animateOpen(this._panelEl,
-      this._$mdUtil.dom.animator);
+  if (this._animateOpenDeferred &&
+      this._animateOpenDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._animateOpenDeferred.promise;
+  }
+
+  var self = this;
+  this._animateOpenDeferred = this._$q.defer();
+  animationConfig.animateOpen(this._panelEl, this._$mdUtil.dom.animator)
+      .then(function() {
+        self._animateOpenDeferred.resolve(self);
+      }, this._animateOpenDeferred.reject);
+
+  return this._animateOpenDeferred.promise;
 };
 
 
@@ -1372,20 +1470,85 @@ MdPanelRef.prototype._animateOpen = function() {
  * @private
  */
 MdPanelRef.prototype._animateClose = function() {
+
   var animationConfig = this._config['animation'];
   if (!animationConfig) {
     this.removeClass('md-panel-is-showing');
     this.removeClass('_md-panel-shown');
-    return this._$q.resolve();
+    this._animateCloseDeferred = this._$q.defer();
+    this._animateCloseDeferred.resolve(this);
+    return this._animateCloseDeferred.promise;
+  }
+
+  if (this._animateCloseDeferred &&
+      this._animateCloseDeferred.promise.$$state.status == 0) {
+    // Promise is in progress, return it.
+    return this._animateCloseDeferred.promise;
   }
 
   var self = this;
-  return this._$q(function(resolve, reject) {
-    animationConfig.animateClose(self._$q).then(function() {
-      self.removeClass('md-panel-is-showing');
-      return resolve(self);
-    }, reject);
-  });
+  this._animateCloseDeferred = this._$q.defer();
+  animationConfig.animateClose(self._$q).then(function() {
+    self.removeClass('md-panel-is-showing');
+    self._animateCloseDeferred.resolve(self);
+  }, this._animateCloseDeferred.reject);
+  return this._animateCloseDeferred.promise;
+};
+
+MdPanelRef.prototype._closeInProgress = function() {
+  var actionInProgress = false;
+  if (this._animateCloseDeferred &&
+      this._animateCloseDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._hideDeferred &&
+      this._hideDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._detachDeferred &&
+      this._detachDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._closeDeferred &&
+      this._closeDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  return actionInProgress;
+};
+
+
+MdPanelRef.prototype._openInProgress = function() {
+  var actionInProgress = false;
+  if (this._createDeferred &&
+      this._createDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._attachDeferred &&
+      this._attachDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._animateOpenDeferred &&
+      this._animateOpenDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._showDeferred &&
+      this._showDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  if (this._openDeferred &&
+      this._openDeferred.promise.$$state.status == 0) {
+    // Promise is in progress.
+    actionInProgress = true;
+  }
+  return actionInProgress;
 };
 
 /*****************************************************************************
@@ -2034,14 +2197,17 @@ MdPanelAnimation.prototype.animateOpen = function(panelEl, animator) {
 /**
  * Animate the panel close.
  * @param {!angular.$q} $q
- * @returns {!angular.$q.Promise}
+ * @returns {!angular.$q.Promise|undefined}
  */
 MdPanelAnimation.prototype.animateClose = function($q) {
-  if (this._reverseAnimation) {
-    return this._reverseAnimation();
-  }
-  return $q.reject('No panel close animation. ' +
-      'Have you called MdPanelAnimation.animateOpen()?');
+  var self = this;
+  return $q(function(resolve, reject) {
+    if (self._reverseAnimation) {
+      self._reverseAnimation().then(function () { resolve(self); }, reject);
+    }
+    reject('No panel close animation. ' +
+        'Have you called MdPanelAnimation.animateOpen()?');
+  });
 };
 
 
